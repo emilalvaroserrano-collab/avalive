@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
 import { liveServiceConfiguration } from '../resources/live_service_configuration';
 import { decode, createBlob } from '../services/audioUtils';
-import { ChatMessage } from '../types';
+import { ChatMessage, AvatarSettings } from '../types';
 
 const LIVE_API_MODEL_NAME = 'gemini-live-2.5-flash-native-audio';
 
@@ -10,7 +10,8 @@ export const useLiveSession = (
   selectedAudioOutputId: string,
   isMuted: boolean,
   isVideoEnabled: boolean,
-  webcamVideoRef: React.RefObject<HTMLVideoElement | null>
+  webcamVideoRef: React.RefObject<HTMLVideoElement | null>,
+  avatarSettings: AvatarSettings
 ) => {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
@@ -127,14 +128,14 @@ export const useLiveSession = (
     }
   }, [isMuted]);
 
-  // Video Streaming Effect
+  // Video Streaming Effect (User camera to avatar session)
   useEffect(() => {
     if (isConnected && isVideoEnabled) {
       const canvasEl = document.createElement('canvas');
       const ctx = canvasEl.getContext('2d');
 
       frameIntervalRef.current = window.setInterval(() => {
-        if (!isSetupCompleteRef.current) return; // Gate video sending until setup is complete
+        if (!isSetupCompleteRef.current) return;
         if (!webcamVideoRef.current || !sessionPromiseRef.current) return;
         const videoEl = webcamVideoRef.current;
 
@@ -210,7 +211,7 @@ export const useLiveSession = (
     videoElement.src = URL.createObjectURL(mediaSource);
 
     if (!videoErrorListenerAddedRef.current) {
-      videoElement.addEventListener("error", (e) => {
+      videoElement.addEventListener("error", () => {
         if (!mseRef.current) return;
         mseRef.current = null;
         sourceBufferRef.current = null;
@@ -240,9 +241,7 @@ export const useLiveSession = (
         }
 
         const currentSourceBuffer = sourceBufferRef.current;
-        if (!currentSourceBuffer) {
-          return;
-        }
+        if (!currentSourceBuffer) return;
 
         if (videoQueueRef.current.length > 0 && !currentSourceBuffer.updating) {
           const chunk = videoQueueRef.current.shift();
@@ -261,7 +260,7 @@ export const useLiveSession = (
           if (!sb || !ms) return;
 
           if (videoElement.paused) {
-            videoElement.play().catch((e) => {
+            videoElement.play().catch(() => {
               setError("Error playing video");
             });
           }
@@ -275,8 +274,6 @@ export const useLiveSession = (
             }
           }
 
-          // --- Explicitly remove unneeded data from the buffer ---
-          // We keep 5 seconds of history to prevent playback stalls, but aggressively remove older data.
           if (!sb.updating && videoElement.currentTime > 6) {
             try {
               if (videoElement.buffered.length > 0) {
@@ -313,8 +310,6 @@ export const useLiveSession = (
     if (videoRef.current) {
       const video = videoRef.current;
 
-      // --- Latency Check ---
-      // Check if we are tracking 3 seconds of audible video playback
       if (trackingAvatarAudioRef.current && videoAnalyserRef.current) {
         if (avatarAudioStartPlayheadRef.current === null) {
           const dataArray = new Float32Array(videoAnalyserRef.current.fftSize);
@@ -339,7 +334,6 @@ export const useLiveSession = (
         }
       }
 
-      // --- Adaptive buffer management based on agent talking state ---
       if (video.readyState >= 2 && !video.paused && video.buffered.length > 0) {
         const bufferedEnd = video.buffered.end(video.buffered.length - 1);
         const bufferAhead = bufferedEnd - video.currentTime;
@@ -358,7 +352,6 @@ export const useLiveSession = (
         }
       }
 
-      // Update debug stats
       let buffered = 0;
       let duration = video.duration;
 
@@ -447,7 +440,9 @@ export const useLiveSession = (
     if (mseRef.current && mseRef.current.readyState === 'open') {
       try {
         mseRef.current.endOfStream();
-      } catch (e) { setError("Failed to end stream") }
+      } catch (e) {
+        setError("Failed to end stream");
+      }
     }
     if (videoRef.current) {
       videoRef.current.pause();
@@ -514,7 +509,7 @@ export const useLiveSession = (
         const scriptProcessor = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
 
         scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-          if (!isSetupCompleteRef.current) return; // Gate audio sending until setup is complete
+          if (!isSetupCompleteRef.current) return;
 
           const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
 
@@ -543,23 +538,36 @@ export const useLiveSession = (
         scriptProcessorRef.current = scriptProcessor;
       };
 
+      // Construct dynamic avatarConfig based on customization
+      let targetAvatarConfig: any;
+      if ((avatarSettings.mode === 'custom-image' || avatarSettings.mode === 'custom-video') && avatarSettings.customImageData) {
+        targetAvatarConfig = {
+          customizedAvatar: {
+            imageData: avatarSettings.customImageData,
+            imageMimeType: avatarSettings.customImageMime || 'image/jpeg'
+          }
+        };
+      } else {
+        targetAvatarConfig = {
+          avatarName: avatarSettings.presetName || 'Ben'
+        };
+      }
+
       const sessionPromise = ai.live.connect({
         model: liveServiceConfiguration.model || LIVE_API_MODEL_NAME,
         callbacks: {
           onopen: () => {
             setIsConnected(true);
-            // Do not set isConnecting to false here, wait for setupComplete
             startAudioInput();
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.setupComplete) {
               setIsSetupComplete(true);
               isSetupCompleteRef.current = true;
-              setIsConnecting(false); // Setup is complete, no longer connecting
+              setIsConnecting(false);
             }
 
             if (message.serverContent?.outputTranscription) {
-              // Mark agent as talking on the first output transcription chunk of a turn
               if (currentOutputTextRef.current === '') {
                 setAgentTalking(true);
               }
@@ -662,19 +670,26 @@ export const useLiveSession = (
               }
             }
           },
-          onerror: (e: ErrorEvent) => {
+          onerror: () => {
             setError('A connection error occurred.');
             disconnect();
           },
-          onclose: (e: CloseEvent) => {
+          onclose: () => {
             disconnect();
           },
         },
         config: {
-          avatarConfig: (liveServiceConfiguration as any).avatarConfig,
-          speechConfig: (liveServiceConfiguration as any).generationConfig?.speechConfig,
-          responseModalities: (liveServiceConfiguration as any).generationConfig?.responseModalities,
-          systemInstruction: (liveServiceConfiguration as any).systemInstruction,
+          avatarConfig: targetAvatarConfig,
+          speechConfig: {
+            languageCode: 'en-US',
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: (avatarSettings.voiceName || 'puck').toLowerCase()
+              }
+            }
+          },
+          responseModalities: (liveServiceConfiguration as any).generationConfig?.responseModalities || ['VIDEO'],
+          systemInstruction: avatarSettings.systemInstruction || (liveServiceConfiguration as any).systemInstruction || 'You are an engaging, supportive AI avatar assistant.',
           inputAudioTranscription: (liveServiceConfiguration as any).input_audio_transcription || (liveServiceConfiguration as any).inputAudioTranscription || {},
           outputAudioTranscription: (liveServiceConfiguration as any).output_audio_transcription || (liveServiceConfiguration as any).outputAudioTranscription || {},
           tools: (liveServiceConfiguration as any).tools,
@@ -685,7 +700,7 @@ export const useLiveSession = (
     } catch (err) {
       disconnect();
     }
-  }, [isConnected, isConnecting, disconnect, initMediaSource, monitoringLoop, isMuted]);
+  }, [isConnected, isConnecting, disconnect, initMediaSource, monitoringLoop, isMuted, avatarSettings]);
 
   const switchMicrophone = useCallback(async (deviceId: string) => {
     if (isConnected && streamRef.current) {
@@ -720,7 +735,6 @@ export const useLiveSession = (
       try {
         session.sendRealtimeInput({ text });
 
-        // Add to chat history immediately for better UX
         setChatHistory(prev => [
           ...prev,
           {
