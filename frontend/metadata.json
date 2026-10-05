@@ -1,7 +1,6 @@
-
 {
-  "name": "Gemini Live Avatar",
-  "description": "A real-time voice chat application featuring an AI avatar powered by the Gemini Live API.",
+  "name": "Gemini Live Avatar Studio",
+  "description": "A real-time voice and video conversation app featuring customizable AI avatars. Upload portrait images or vertical video clips, choose from studio presets, and customize voice personas powered by Gemini Live.",
   "requestFramePermissions": [
     "microphone",
     "camera"
