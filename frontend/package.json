@@ -1,5 +1,5 @@
 {
-  "name": "untitled-app-frontend",
+  "name": "gemini-live-avatar-studio-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,8 @@
   "dependencies": {
     "react": "latest",
     "react-dom": "latest",
-    "@google/genai": "latest"
+    "@google/genai": "latest",
+    "lucide-react": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
