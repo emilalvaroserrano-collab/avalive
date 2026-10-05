@@ -1,14 +1,23 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { TranscriptionPanel } from './components/TranscriptionPanel';
 import { UserWebCamDisplay } from './components/UserWebCamDisplay';
 import { TopBar } from './components/TopBar';
 import { DebugPanel } from './components/DebugPanel';
 import { AvatarDisplay } from './components/AvatarDisplay';
 import { ControlBar } from './components/ControlBar';
+import { AvatarCustomizerModal } from './components/AvatarCustomizerModal';
 import { useTheme } from './hooks/useTheme';
 import { useMediaDevices } from './hooks/useMediaDevices';
 import { useLiveSession } from './hooks/useLiveSession';
-import { VideoMode } from './types';
+import { VideoMode, AvatarSettings } from './types';
+
+const DEFAULT_AVATAR_SETTINGS: AvatarSettings = {
+  mode: 'preset',
+  presetName: 'Ben',
+  voiceName: 'Puck',
+};
+
+const STORAGE_KEY = 'gemini_avatar_customizer_settings';
 
 const App: React.FC = () => {
   const { theme, setTheme } = useTheme();
@@ -24,6 +33,41 @@ const App: React.FC = () => {
   const [isTranscriptionPanelOpen, setIsTranscriptionPanelOpen] = useState(true);
   const [isAvatarVisible, setIsAvatarVisible] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
+  const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
+
+  // Load avatar settings from localStorage or fallback
+  const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      // Ignore
+    }
+    return DEFAULT_AVATAR_SETTINGS;
+  });
+
+  // Save changes to localStorage
+  const handleSaveAvatarSettings = (newSettings: AvatarSettings) => {
+    setAvatarSettings(newSettings);
+    try {
+      // Avoid storing huge video blobs in localStorage, store configuration
+      const toStore = {
+        mode: newSettings.mode,
+        presetName: newSettings.presetName,
+        voiceName: newSettings.voiceName,
+        customImageMime: newSettings.customImageMime,
+        customImagePreviewUrl: newSettings.customImagePreviewUrl,
+        customImageFileName: newSettings.customImageFileName,
+        customVideoFileName: newSettings.customVideoFileName,
+        customImageData: newSettings.customImageData
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    } catch (e) {
+      console.warn('Could not store full avatar settings in localStorage', e);
+    }
+  };
 
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -31,7 +75,7 @@ const App: React.FC = () => {
     isConnected, isConnecting, isWaitingForVideo, hasVideo, error: sessionError,
     chatHistory, liveInput, liveOutput, debugStats, videoRef, agentTalking,
     connect, disconnect, switchMicrophone, sendTextMessage
-  } = useLiveSession(selectedAudioOutputId, isMuted, videoMode !== 'none', webcamVideoRef);
+  } = useLiveSession(selectedAudioOutputId, isMuted, videoMode !== 'none', webcamVideoRef, avatarSettings);
 
   const handleDeviceChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = e.target.value;
@@ -68,7 +112,7 @@ const App: React.FC = () => {
         isAvatarVisible={isAvatarVisible}
       />
 
-      <div className="relative flex-1 flex flex-col items-center justify-center gap-4 pb-6 pt-12 transition-all duration-300">
+      <div className="relative flex-1 flex flex-col items-center justify-center gap-3 pb-6 pt-12 transition-all duration-300">
         <TopBar
           isTranscriptionPanelOpen={isTranscriptionPanelOpen}
           setIsTranscriptionPanelOpen={setIsTranscriptionPanelOpen}
@@ -78,6 +122,8 @@ const App: React.FC = () => {
           setTheme={setTheme}
           isAvatarVisible={isAvatarVisible}
           setIsAvatarVisible={setIsAvatarVisible}
+          avatarSettings={avatarSettings}
+          onOpenCustomizer={() => setIsCustomizerOpen(true)}
         />
 
         <DebugPanel showDebug={showDebug} debugStats={debugStats} />
@@ -90,6 +136,8 @@ const App: React.FC = () => {
           error={error}
           isAvatarVisible={isAvatarVisible}
           agentTalking={agentTalking}
+          avatarSettings={avatarSettings}
+          onOpenCustomizer={() => setIsCustomizerOpen(true)}
         />
 
         <ControlBar
@@ -119,6 +167,15 @@ const App: React.FC = () => {
         deviceId={selectedVideoDeviceId}
         videoRef={webcamVideoRef}
         onVideoStop={handleVideoStop}
+      />
+
+      {/* Avatar Customization Modal */}
+      <AvatarCustomizerModal
+        isOpen={isCustomizerOpen}
+        onClose={() => setIsCustomizerOpen(false)}
+        currentSettings={avatarSettings}
+        onSaveSettings={handleSaveAvatarSettings}
+        isConnected={isConnected}
       />
     </div>
   );
